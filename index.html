@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leaflet Map Composition</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+
+    .cap-control {
+      background: #fff;
+      border: 2px solid rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+      padding: 0;
+    }
+
+    #getcap-btn {
+      border: 0;
+      background: #fff;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    #cap-panel {
+      display: none;
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      width: min(92vw, 520px);
+      background: #fff;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    #cap-panel h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    #cap-panel a {
+      display: block;
+      margin: 8px 0;
+      word-break: break-all;
+      color: #0056b3;
+      text-decoration: none;
+    }
+
+    #cap-panel a:hover {
+      text-decoration: underline;
+    }
+
+    #close-cap {
+      margin-top: 10px;
+      padding: 6px 10px;
+      border: 1px solid #888;
+      border-radius: 4px;
+      background: #f2f2f2;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="cap-panel">
+    <h3>GetCapabilities</h3>
+    <a href="http://localhost:8080/geoserver/wms?service=WMS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
+      http://localhost:8080/geoserver/wms?service=WMS&request=GetCapabilities
+    </a>
+    <a href="http://localhost:8080/geoserver/wfs?service=WFS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
+      http://localhost:8080/geoserver/wfs?service=WFS&request=GetCapabilities
+    </a>
+    <a href="https://ags.cuzk.gov.cz/arcgis1/services/ORTOFOTO/MapServer/WMSServer?service=WMS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
+      https://ags.cuzk.gov.cz/arcgis1/services/ORTOFOTO/MapServer/WMSServer?service=WMS&request=GetCapabilities
+    </a>
+    <button id="close-cap" type="button">Close</button>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.12.1/proj4.min.js"></script>
+  <script>
+    const map = L.map("map", {
+      center: [49.56, 17.14],
+      zoom: 10,
+      zoomControl: true
+    });
+
+    const qfLayer = L.tileLayer.wms("https://ags.cuzk.gov.cz/arcgis1/services/ORTOFOTO/MapServer/WMSServer", {
+      layers: "0",
+      format: "image/jpeg",
+      transparent: false,
+      version: "1.3.0"
+    }).addTo(map);
+
+    const obceLayer = L.tileLayer.wms("http://localhost:8080/geoserver/zapocet2/wms", {
+      layers: "zapocet2:obceORP_clip",
+      format: "image/png",
+      transparent: true,
+      version: "1.1.1"
+    }).addTo(map);
+
+    const komunikaceLayer = L.geoJSON(null, {
+      style: {
+        color: "#FFD700",
+        weight: 4,
+        opacity: 0.8
+      },
+      onEachFeature: function (feature, layer) {
+        const props = feature.properties || {};
+        const trida = props.TRIDA ?? props.trida ?? "-";
+        const cislo = props.CISLO_SILNICE ?? props.cislo_silnice ?? "-";
+        const pruhy = props.PRUHY ?? props.pruhy ?? "-";
+        
+        layer.bindPopup(
+          "<div style=\"min-width:200px;\">" +
+          "<b>komunikace_Mikeska</b><br>" +
+          "TRIDA: " + esc(trida) + "<br>" +
+          "CISLO_SILNICE: " + esc(cislo) + "<br>" +
+          "PRUHY: " + esc(pruhy) +
+          "</div>"
+        );
+      }
+    }).addTo(map);
+
+    function transformCoord(coord) {
+      if (!Array.isArray(coord) || coord.length < 2) {
+        return coord;
+      }
+      return proj4("EPSG:5514", "EPSG:4326", [coord[0], coord[1]]);
+    }
+
+    function transformCoords(coords) {
+      if (!Array.isArray(coords) || coords.length === 0) {
+        return coords;
+      }
+      if (typeof coords[0] === "number") {
+        return transformCoord(coords);
+      }
+      return coords.map(transformCoords);
+    }
+
+    function reprojectGeojson(geojson) {
+      if (!geojson || !Array.isArray(geojson.features)) {
+        return geojson;
+      }
+      geojson.features.forEach(function (feature) {
+        if (feature.geometry && feature.geometry.coordinates) {
+          feature.geometry.coordinates = transformCoords(feature.geometry.coordinates);
+        }
+      });
+      return geojson;
+    }
+
+    fetch("komunikace.geojson")
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("Cannot load komunikace.geojson");
+        }
+        return response.json();
+      })
+      .then(function (data) {
+        const crsName = data && data.crs && data.crs.properties ? data.crs.properties.name : "";
+        if (typeof crsName === "string" && crsName.includes("5514")) {
+          data = reprojectGeojson(data);
+        }
+        komunikaceLayer.addData(data);
+      })
+      .catch(function (error) {
+        console.error("Failed to load komunikace.geojson:", error);
+      });
+
+    L.control.layers({}, {
+      QF: qfLayer,
+      Obce_Mikeska: obceLayer,
+      komunikace_Mikeska: komunikaceLayer
+    }, {
+      collapsed: false
+    }).addTo(map);
+
+    function esc(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatPropsTable(props, preferredKeys) {
+      const keys = Object.keys(props || {});
+      const preferred = preferredKeys.filter(function (k) { return keys.includes(k); });
+      const rest = keys.filter(function (k) { return !preferred.includes(k); }).sort();
+      const ordered = preferred.concat(rest);
+
+      if (ordered.length === 0) {
+        return "<div>Bez atributu</div>";
+      }
+
+      let html = "<table style=\"border-collapse:collapse;font-size:12px;\">";
+      ordered.forEach(function (k) {
+        const v = props[k] === null || props[k] === undefined ? "-" : props[k];
+        html += "<tr><td style=\"padding:2px 8px 2px 0;font-weight:600;vertical-align:top;\">" + esc(k) + "</td><td style=\"padding:2px 0;\">" + esc(v) + "</td></tr>";
+      });
+      html += "</table>";
+      return html;
+    }
+
+    proj4.defs("EPSG:5514", "+proj=krovak +lat_0=49.5 +lon_0=24.83333333333333 +alpha=30.28813972222222 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +towgs84=570.69,85.69,462.84,4.998,1.587,5.261,3.56 +units=m +no_defs");
+
+    let obceLocalGeojson = null;
+    let obceSourceIs5514 = true;
+
+    fetch("geojson_obce.geojson")
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("Cannot load geojson_obce.geojson");
+        }
+        return response.json();
+      })
+      .then(function (data) {
+        obceLocalGeojson = data;
+        const crsName = data && data.crs && data.crs.properties ? data.crs.properties.name : "";
+        obceSourceIs5514 = typeof crsName === "string" ? crsName.includes("5514") : true;
+      })
+      .catch(function () {
+        obceLocalGeojson = null;
+      });
+
+    function pointInRing(point, ring) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0];
+        const yi = ring[i][1];
+        const xj = ring[j][0];
+        const yj = ring[j][1];
+
+        const intersects = ((yi > point[1]) !== (yj > point[1])) &&
+          (point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || 1e-12) + xi);
+
+        if (intersects) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    }
+
+    function pointInPolygon(point, polygonCoords) {
+      if (!Array.isArray(polygonCoords) || polygonCoords.length === 0) {
+        return false;
+      }
+
+      if (!pointInRing(point, polygonCoords[0])) {
+        return false;
+      }
+
+      for (let i = 1; i < polygonCoords.length; i++) {
+        if (pointInRing(point, polygonCoords[i])) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    function pointInGeometry(point, geometry) {
+      if (!geometry || !geometry.type || !geometry.coordinates) {
+        return false;
+      }
+
+      if (geometry.type === "Polygon") {
+        return pointInPolygon(point, geometry.coordinates);
+      }
+
+      if (geometry.type === "MultiPolygon") {
+        return geometry.coordinates.some(function (polygon) {
+          return pointInPolygon(point, polygon);
+        });
+      }
+
+      return false;
+    }
+
+    function findObecByPoint(clickLatLng) {
+      if (!obceLocalGeojson || !Array.isArray(obceLocalGeojson.features)) {
+        return null;
+      }
+
+      const point = obceSourceIs5514
+        ? proj4("EPSG:4326", "EPSG:5514", [clickLatLng.lng, clickLatLng.lat])
+        : [clickLatLng.lng, clickLatLng.lat];
+
+      for (let i = 0; i < obceLocalGeojson.features.length; i++) {
+        const feature = obceLocalGeojson.features[i];
+        if (pointInGeometry(point, feature.geometry)) {
+          return feature;
+        }
+      }
+
+      return null;
+    }
+
+    map.on("click", function (event) {
+      if (!map.hasLayer(obceLayer)) {
+        return;
+      }
+
+      const popup = L.popup()
+        .setLatLng(event.latlng)
+        .setContent("<b>Obce_Mikeska</b><br>Nacitam informace z geojson_obce.geojson...")
+        .openOn(map);
+
+      const hit = findObecByPoint(event.latlng);
+      if (!hit) {
+        popup.setContent("<b>Obce_Mikeska</b><br>Na tomto miste nebyla nalezena zadna obec nebo neni nacten geojson_obce.geojson.");
+        return;
+      }
+
+      const props = hit.properties || {};
+      const nazev = props.NAZEV ?? props.nazev ?? "-";
+      const kodorp = props.KODORP ?? props.kodorp ?? "-";
+      popup.setContent(
+        "<div style=\"min-width:260px;max-width:360px;\">" +
+        "<b>Obce_Mikeska</b><br>" +
+        "NAZEV: " + esc(nazev) + "<br>" +
+        "KODORP: " + esc(kodorp) +
+        "</div>"
+      );
+    });
+
+    const capPanel = document.getElementById("cap-panel");
+
+    const CapControl = L.Control.extend({
+      options: { position: "topright" },
+      onAdd: function () {
+        const container = L.DomUtil.create("div", "cap-control");
+        const btn = L.DomUtil.create("button", "", container);
+        btn.id = "getcap-btn";
+        btn.type = "button";
+        btn.textContent = "GetCapabilities";
+
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.on(btn, "click", function () {
+          capPanel.style.display = capPanel.style.display === "block" ? "none" : "block";
+        });
+
+        return container;
+      }
+    });
+
+    map.addControl(new CapControl());
+
+    document.getElementById("close-cap").addEventListener("click", function () {
+      capPanel.style.display = "none";
+    });
+  </script>
+</body>
+</html>

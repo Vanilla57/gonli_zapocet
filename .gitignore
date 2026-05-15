@@ -1,0 +1,23 @@
+# Ignorovat dočasné a velké geoprostorové soubory
+# Shapefile přílohy
+*.shp
+*.shx
+*.dbf
+*.prj
+*.sbn
+*.sbx
+*.qix
+
+# GeoPackage (pokud nechcete verzovat velké binární GPKG soubory)
+*.gpkg
+
+# QGIS dočasné / záložní soubory
+*.qgs~
+*.qgz~
+
+# Systémové soubory
+.DS_Store
+Thumbs.db
+
+# Lokální kopie nebo zálohy
+obceORP - kopie/
