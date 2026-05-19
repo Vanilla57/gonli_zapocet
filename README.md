@@ -47,5 +47,5 @@ python -m http.server 8000
 7) Poznámky ke sdílení / verzování
 - Nepřidávejte do Gitu velké binární geoprostorové soubory (GPKG, shapefile přílohy). Použijte `.gitignore` (v repozitáři již přidáno).
 
-Autor: MikeSka — Praktický zápočet KGI/GONLI, Palacký Univerzita Olomouc
+Autor: Bc. Petr Mikeska — Praktický zápočet KGI/GONLI, Palacký Univerzita Olomouc
 
