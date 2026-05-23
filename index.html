@@ -86,14 +86,22 @@ S<!DOCTYPE html>
 
   <div id="cap-panel">
     <h3>GetCapabilities</h3>
+    <div style="font-weight:600;margin-bottom:6px;">Layers in map:</div>
+    <div style="margin-bottom:8px;">- Corine<br>- Address_WMS</div>
     <a href="http://localhost:8080/geoserver/wms?service=WMS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
       http://localhost:8080/geoserver/wms?service=WMS&request=GetCapabilities
     </a>
     <a href="http://localhost:8080/geoserver/wfs?service=WFS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
       http://localhost:8080/geoserver/wfs?service=WFS&request=GetCapabilities
     </a>
-    <a href="https://ags.cuzk.gov.cz/arcgis1/services/ORTOFOTO/MapServer/WMSServer?service=WMS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
-      https://ags.cuzk.gov.cz/arcgis1/services/ORTOFOTO/MapServer/WMSServer?service=WMS&request=GetCapabilities
+    <a href="http://localhost:8080/geoserver/martin_1/wms?service=WMS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
+      http://localhost:8080/geoserver/martin_1/wms?service=WMS&request=GetCapabilities
+    </a>
+    <a href="http://localhost:8080/geoserver/martin_1/wfs?service=WFS&request=GetCapabilities" target="_blank" rel="noopener noreferrer">
+      http://localhost:8080/geoserver/martin_1/wfs?service=WFS&request=GetCapabilities
+    </a>
+    <a href="http://localhost:8080/geoserver/martin_1/wms?service=WMS&version=1.1.0&request=GetMap&layers=martin_1%3Aaddress&bbox=-574930.4699999988%2C-1138587.620000001%2C-524637.5500000007%2C-1089656.9800000004&width=768&height=747&srs=EPSG%3A5514&styles=&format=application/openlayers" target="_blank" rel="noopener noreferrer">
+      Example GetMap (martin_1:address)
     </a>
     <button id="close-cap" type="button">Close</button>
   </div>
@@ -116,14 +124,63 @@ S<!DOCTYPE html>
       format: "image/jpeg",
       transparent: false,
       version: "1.3.0"
-    }).addTo(map);
+    });
 
     const obceLayer = L.tileLayer.wms("http://localhost:8080/geoserver/zapocet2/wms", {
       layers: "zapocet2:obceORP_clip",
       format: "image/png",
       transparent: true,
       version: "1.1.1"
-    }).addTo(map);
+    });
+
+    // --- User-requested layers: WFS (GeoJSON points) and WMS (Corine) ---
+    const corineWmsUrl = "http://localhost:8080/geoserver/martin_1/wms";
+
+    const corineLayer = L.tileLayer.wms(corineWmsUrl, {
+      layers: "martin_1:corine_clc18_CZ",
+      format: "image/png",
+      transparent: true,
+      version: "1.1.1",
+      // request SRS in EPSG:5514 as requested
+      srs: "EPSG:5514",
+      zIndex: 300
+    });
+    // show Corine by default
+    corineLayer.addTo(map);
+
+    // External CENIA Corine WMS (alternative source)
+    const ceniaCorineWmsUrl = "https://gis.cenia.cz/geoserver/corine_land_cover_2018/wms";
+    const ceniaCorineLayer = L.tileLayer.wms(ceniaCorineWmsUrl, {
+      layers: "corine_land_cover_2018:corine_clc18", // server-side layer name may vary
+      format: "image/png",
+      transparent: true,
+      version: "1.1.1",
+      srs: "EPSG:5514"
+    });
+
+    // Address WMS layer (example GetMap URL provided) — use WMS tile layer
+    const addressWmsUrl = "http://localhost:8080/geoserver/martin_1/wms";
+    const addressLayer = L.tileLayer.wms(addressWmsUrl, {
+      layers: "martin_1:address",
+      format: "image/png",
+      transparent: true,
+      version: "1.1.0",
+      srs: "EPSG:5514",
+      zIndex: 400
+    });
+    // Add address WMS to map by default (points rendered by GeoServer)
+    addressLayer.addTo(map);
+
+    const corineBbox5514 = [-905584, -1228295, -430726, -934236];
+    function bbox5514ToLatLngBounds(bbox) {
+      const [minX, minY, maxX, maxY] = bbox;
+      const sw = proj4("EPSG:5514", "EPSG:4326", [minX, minY]);
+      const ne = proj4("EPSG:5514", "EPSG:4326", [maxX, maxY]);
+      return L.latLngBounds([ [sw[1], sw[0]], [ne[1], ne[0]] ]);
+    }
+
+    // Add Corine WMS to layer control (but not shown by default)
+    // Note: corineLayer uses EPSG:5514 as requested; server must support requested SRS.
 
     const komunikaceLayer = L.geoJSON(null, {
       style: {
@@ -146,7 +203,7 @@ S<!DOCTYPE html>
           "</div>"
         );
       }
-    }).addTo(map);
+    });
 
     function transformCoord(coord) {
       if (!Array.isArray(coord) || coord.length < 2) {
@@ -195,10 +252,74 @@ S<!DOCTYPE html>
         console.error("Failed to load komunikace.geojson:", error);
       });
 
+    // When clicking on the map, request GetFeatureInfo from the address WMS and show attributes
+    map.on('click', function (evt) {
+      if (!map.hasLayer(addressLayer)) return;
+
+      const clickLatLng = evt.latlng;
+      const size = map.getSize();
+      const bounds = map.getBounds();
+
+      // Convert map bounds to EPSG:5514 for WMS bbox
+      const sw = proj4('EPSG:4326', 'EPSG:5514', [bounds.getSouthWest().lng, bounds.getSouthWest().lat]);
+      const ne = proj4('EPSG:4326', 'EPSG:5514', [bounds.getNorthEast().lng, bounds.getNorthEast().lat]);
+      const bbox = [sw[0], sw[1], ne[0], ne[1]].join(',');
+
+      const point = map.latLngToContainerPoint(clickLatLng);
+      const x = Math.floor(point.x);
+      const y = Math.floor(point.y);
+
+      const params = {
+        service: 'WMS',
+        version: '1.1.1',
+        request: 'GetFeatureInfo',
+        layers: 'martin_1:address',
+        query_layers: 'martin_1:address',
+        styles: '',
+        bbox: bbox,
+        width: size.x,
+        height: size.y,
+        srs: 'EPSG:5514',
+        format: 'image/png',
+        info_format: 'application/json',
+        x: x,
+        y: y
+      };
+
+      const url = addressWmsUrl + L.Util.getParamString(params, addressWmsUrl, true);
+
+      fetch(url)
+        .then(function (res) {
+          if (!res.ok) throw new Error('GFI request failed');
+          return res.text();
+        })
+        .then(function (txt) {
+          let content = '';
+          try {
+            const json = JSON.parse(txt);
+            if (json && Array.isArray(json.features) && json.features.length > 0) {
+              content = formatPropsTable(json.features[0].properties || {}, []);
+            } else {
+              content = '<div>Žádné atributy (featureinfo prázdný)</div>';
+            }
+          } catch (e) {
+            // not JSON, show raw text
+            content = '<div style="max-width:320px;white-space:pre-wrap;">' + esc(txt) + '</div>';
+          }
+
+          L.popup({ maxWidth: 420 })
+            .setLatLng(clickLatLng)
+            .setContent('<b>Address WMS - GetFeatureInfo</b><br>' + content)
+            .openOn(map);
+        })
+        .catch(function (err) {
+          console.error('GetFeatureInfo error:', err);
+        });
+    });
+
     L.control.layers({}, {
-      QF: qfLayer,
-      Obce_Mikeska: obceLayer,
-      komunikace_Mikeska: komunikaceLayer
+      Corine: corineLayer,
+      Address_WMS: addressLayer
     }, {
       collapsed: false
     }).addTo(map);
