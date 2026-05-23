@@ -260,52 +260,75 @@ S<!DOCTYPE html>
       const x = Math.floor(point.x);
       const y = Math.floor(point.y);
 
-      const params = {
-        service: 'WMS',
-        version: '1.1.1',
-        request: 'GetFeatureInfo',
-        layers: 'martin_1:address',
-        query_layers: 'martin_1:address',
-        styles: '',
-        bbox: bbox,
-        width: size.x,
-        height: size.y,
-        srs: 'EPSG:5514',
-        format: 'image/png',
-        info_format: 'application/json',
-        x: x,
-        y: y
-      };
+      const wmsVersion = addressLayer.options && addressLayer.options.version ? addressLayer.options.version : '1.1.1';
 
-      const url = addressWmsUrl + L.Util.getParamString(params, addressWmsUrl, true);
+      function buildParams(infoFormat) {
+        return {
+          service: 'WMS',
+          version: wmsVersion,
+          request: 'GetFeatureInfo',
+          layers: 'martin_1:address',
+          query_layers: 'martin_1:address',
+          styles: '',
+          bbox: bbox,
+          width: size.x,
+          height: size.y,
+          srs: 'EPSG:5514',
+          info_format: infoFormat,
+          x: x,
+          y: y
+        };
+      }
 
-      fetch(url)
-        .then(function (res) {
-          if (!res.ok) throw new Error('GFI request failed');
-          return res.text();
-        })
-        .then(function (txt) {
-          let content = '';
-          try {
-            const json = JSON.parse(txt);
-            if (json && Array.isArray(json.features) && json.features.length > 0) {
-              content = formatPropsTable(json.features[0].properties || {}, []);
+      const tryFormats = ['application/json', 'text/html', 'text/plain'];
+
+      (function tryNextFormat(i) {
+        if (i >= tryFormats.length) {
+          L.popup({ maxWidth: 420 }).setLatLng(clickLatLng).setContent('<b>Address WMS - GetFeatureInfo</b><br><div>Žádná odpověď nebo chyba při dotazu.</div>').openOn(map);
+          return;
+        }
+        const infoFormat = tryFormats[i];
+        const params = buildParams(infoFormat);
+        const url = addressWmsUrl + L.Util.getParamString(params, addressWmsUrl, true);
+        console.log('GetFeatureInfo URL ->', url);
+
+        fetch(url, { mode: 'cors' })
+          .then(function (res) {
+            if (!res.ok) throw new Error('GFI request failed: ' + res.status);
+            return res.text();
+          })
+          .then(function (txt) {
+            if (!txt) throw new Error('Empty response');
+            if (infoFormat === 'application/json') {
+              try {
+                const json = JSON.parse(txt);
+                if (json && Array.isArray(json.features) && json.features.length > 0) {
+                  const content = formatPropsTable(json.features[0].properties || {}, []);
+                  L.popup({ maxWidth: 420 }).setLatLng(clickLatLng).setContent('<b>Address WMS - GetFeatureInfo</b><br>' + content).openOn(map);
+                  return;
+                }
+                // no features -> show message
+                L.popup({ maxWidth: 420 }).setLatLng(clickLatLng).setContent('<b>Address WMS - GetFeatureInfo</b><br><div>Žádné atributy (featureinfo prázdný)</div>').openOn(map);
+              } catch (e) {
+                // not JSON -> try next format
+                tryNextFormat(i + 1);
+              }
+            } else if (infoFormat === 'text/html') {
+              // show HTML directly
+              L.popup({ maxWidth: 600, autoPan: true }).setLatLng(clickLatLng).setContent('<b>Address WMS - GetFeatureInfo</b><br>' + txt).openOn(map);
             } else {
-              content = '<div>Žádné atributy (featureinfo prázdný)</div>';
+              // plain text
+              L.popup({ maxWidth: 420 }).setLatLng(clickLatLng).setContent('<b>Address WMS - GetFeatureInfo</b><br><div style="white-space:pre-wrap;">' + esc(txt) + '</div>').openOn(map);
             }
-          } catch (e) {
-            // not JSON, show raw text
-            content = '<div style="max-width:320px;white-space:pre-wrap;">' + esc(txt) + '</div>';
-          }
-
-          L.popup({ maxWidth: 420 })
-            .setLatLng(clickLatLng)
-            .setContent('<b>Address WMS - GetFeatureInfo</b><br>' + content)
-            .openOn(map);
-        })
-        .catch(function (err) {
-          console.error('GetFeatureInfo error:', err);
-        });
+          })
+          .catch(function (err) {
+            console.warn('GFI attempt failed for format', infoFormat, err);
+            tryNextFormat(i + 1);
+          });
+      })(0);
+      // end tryNextFormat
+      // If all attempts fail, provide the user a direct link they can open (we also log URLs above)
+      // Note: popup with link is created in the failure branch inside tryNextFormat when it exhausts formats.
     });
 
     L.control.layers({}, {
